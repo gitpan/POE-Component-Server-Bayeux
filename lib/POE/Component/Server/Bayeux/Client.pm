@@ -89,12 +89,26 @@ sub new {
         # Create a new client id
         $self->id( $uuid->create_str() ) unless $self->id();
         my $heap = {
-            created => time(),
+            created => time,
             ip => $self->ip,
-            flags => {},
+            flags => {
+                last_connect => time,
+            },
             session => $self->session,
         };
         $self->server_heap->{clients}{ $self->id } = $heap;
+
+        # Let the manager server know so it can do notifications
+        $poe_kernel->post( $self->server_heap->{manager},
+            'client_connect', {
+                client_id => $self->id,
+                ($self->session ? (
+                    session => $self->session,
+                ) : (
+                    ip => $self->ip,
+                )),
+            },
+        );
     }
 
     $self->heap( $self->server_heap->{clients}{$self->id} );
@@ -128,6 +142,10 @@ sub disconnect {
     my ($self) = @_;
 
     $self->complete_poll();
+
+    # Let the manager server know so it can do notifications and unsubscribes
+    $poe_kernel->post( $self->server_heap->{manager},
+        'client_disconnect', { client_id => $self->id });
 }
 
 sub complete_poll {
@@ -154,6 +172,12 @@ set with the error.
 sub message_acl {
     my ($self, $message) = @_;
 
+    # If the client has asked for comment filtered JSON, pass this along to the
+    # request which will be encapsulating the results.
+    if ($self->flags->{'json-comment-filtered'}) {
+        $message->request->json_comment_filtered(1);
+    }
+
     # All messages fail if I'm in error
     if ($self->is_error) {
         $message->is_error($self->is_error);
@@ -161,6 +185,7 @@ sub message_acl {
     }
 
     $self->server_config->{MessageACL}->($self, $message);
+    return if $message->is_error;
 }
 
 =head2 is_subscribed ($channel)
@@ -194,6 +219,10 @@ Structure of the message is same as Bayeux '5.2. Deliver Event message'.
 sub send_message {
     my ($self, $message, $subscription_args) = @_;
 
+    if ($subscription_args->{no_callback}) {
+        return;
+    }
+
     if ($self->session) {
         my $state = $subscription_args->{state} || 'deliver';
         $poe_kernel->post( $self->session, $state, $message );
@@ -202,11 +231,11 @@ sub send_message {
 
     $self->check_timeout();
     if ($self->is_error()) {
-        $self->logger->error("Not sending message to ".$self->id.": ".$self->is_error);
+        $self->logger->error("Not sending message to client ".$self->id.": ".$self->is_error);
         return;
     }
 
-    $self->logger->debug("Queuing message to ".$self->id);
+    $self->logger->debug("Queuing message to client ".$self->id);
     push @{ $self->heap->{queued_responses} }, $message;
     $self->flush_queue();
 }
@@ -225,12 +254,15 @@ it's stale (according to server arg ConnectTimeout).
 sub check_timeout {
     my ($self) = @_;
 
+    return if $self->session;
+    return if $self->flags->{is_polling};
     my $connect_timeout = $self->server_heap->{args}{ConnectTimeout};
-    if (! $self->flags->{last_connect} ||
-        time - $self->flags->{last_connect} > $connect_timeout) {
-        delete $self->server_heap->{clients}{ $self->id };
-        $self->is_error("Connect timeout; removing client");
+    if (time - $self->flags->{last_connect} < $connect_timeout) {
+        return;
     }
+
+    $self->is_error("Connect timeout; removing client");
+    $self->disconnect();
 }
 
 =head2 flush_queue ()

@@ -35,6 +35,8 @@ POE::Component::Client::Bayeux - Bayeux/cometd client implementation in POE
         },
     );
 
+    $poe_kernel->run();
+
 =head1 DESCRIPTION
 
 This module implements the Bayeux Protocol (1.0draft1) from the Dojo Foundation.
@@ -46,8 +48,6 @@ moment for testing a Bayeux server.
 
 =cut
 
-$poe_kernel->run();
-
 use strict;
 use warnings;
 use POE qw(Component::Client::HTTP Component::Client::Bayeux::Transport);
@@ -56,14 +56,20 @@ use Data::Dumper;
 use JSON::Any;
 use Data::UUID;
 use HTTP::Request::Common;
+use Log::Log4perl qw(get_logger :levels);
+use Log::Log4perl::Appender;
+use Log::Log4perl::Layout;
 
+use POE::Component::Client::Bayeux::Utilities qw(decode_json_response);
 use POE::Component::Server::Bayeux::Utilities qw(channel_match);
 
-use base qw(Class::Accessor);
-__PACKAGE__->mk_accessors(qw(session));
+use base qw(Class::Accessor Exporter);
+__PACKAGE__->mk_accessors(qw(session clientId logger));
+
+our @EXPORT_OK = qw(decode_json_response);
 
 my $protocol_version = '1.0';
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =head1 USAGE
 
@@ -94,6 +100,14 @@ The POE session alias for local sessions to interact with.
 =item I<Debug> (default: 0)
 
 Either 0 or 1, indicates level of logging.
+
+=item I<LogFile> (default: undef)
+
+Logfile to write output to.
+
+=item I<LogStdout> (default: 1)
+
+If false, no logger output to STDOUT.
 
 =item I<CrossDomain> (not implemented)
 
@@ -130,6 +144,8 @@ sub spawn {
         CrossDomain => { default => 0 },
         Debug => { default => 0 },
         ErrorCallback => 0,
+        LogFile => 0,
+        LogStdout => { default => 1 },
     });
 
     if ($args{CrossDomain}) {
@@ -145,6 +161,8 @@ sub spawn {
         Alias => $ua_alias,
     );
 
+    my $self = bless { %args }, $class;
+
     my $session = POE::Session->create(
         inline_states => {
             _start => \&client_start,
@@ -159,6 +177,7 @@ sub spawn {
             disconnect  => \&disconnect,
 
             # Internal
+            handshake => \&handshake,
             handshake_response => \&handshake_response,
             send_message => \&send_message,
             ua_response => \&ua_response,
@@ -173,10 +192,39 @@ sub spawn {
             json       => JSON::Any->new(),
             uuid       => Data::UUID->new(),
             subscriptions => {},
+            client     => $self,
         },
     );
 
-    return bless { %args, session => $session }, $class;
+    # Setup logger
+    my $logger = Log::Log4perl->get_logger('bayeux_client');
+    {
+        my $logger_layout = Log::Log4perl::Layout::PatternLayout->new("[\%d] \%p: \%m\%n");
+        $logger->level($args{Debug} ? $DEBUG : $INFO);
+
+        if ($args{LogFile}) {
+            my $file_appender = Log::Log4perl::Appender->new(
+                'Log::Log4perl::Appender::File',
+                name => 'filelog',
+                filename => $args{LogFile},
+            );
+            $file_appender->layout( $logger_layout );
+            $logger->add_appender($file_appender);
+        }
+        if ($args{LogStdout}) {
+            my $stdout_appender = Log::Log4perl::Appender->new(
+                'Log::Log4perl::Appender::Screen',
+                name => 'screenlog',
+                stderr => 0,
+            );
+            $stdout_appender->layout($logger_layout);
+            $logger->add_appender($stdout_appender);
+        }
+    }
+
+    $self->{logger} = $logger;
+    $self->{session} = $session->ID;
+    return $self;
 }
 
 sub client_start {
@@ -216,16 +264,26 @@ Initializes the client, connecting to the server, and sets up long polling.
 sub init {
     my ($kernel, $heap) = @_[KERNEL, HEAP];
 
+    $kernel->yield('handshake');
+}
+
+
+sub handshake {
+    my ($kernel, $heap) = @_[KERNEL, HEAP];
+
     my %handshake = (
         channel => '/meta/handshake',
         version => $protocol_version,
         minimumVersion => $protocol_version,
         supportedConnectionTypes => [ 'long-polling' ],
+        ext => {
+            'json-comment-filtered' => 1,
+        }
     );
 
     $kernel->yield('send_message', 'handshake_response', \%handshake);
 
-    # Unsubscribe from all
+    # Unsubscribe from all TODO
 
     $heap->{_initialized} = 1;
 }
@@ -244,7 +302,7 @@ and 'id' fields auto-populated.
 sub publish {
     my ($kernel, $heap, $channel, $message) = @_[KERNEL, HEAP, ARG0, ARG1];
 
-    $kernel->yield('send_transport', {
+    $kernel->call($_[SESSION], 'send_transport', {
         channel => $channel,
         data => $message,
     });
@@ -265,17 +323,19 @@ message that was posted to the channel subscribed to.
 sub subscribe {
     my ($kernel, $heap, $channel, $callback) = @_[KERNEL, HEAP, ARG0, ARG1];
 
-    my %subscribe = (
-        channel => '/meta/subscribe',
-        subscription => $channel,
-    );
-
-    $kernel->yield('send_transport', \%subscribe);
+    return if $heap->{subscriptions}{$channel}
+        && $heap->{subscriptions}{$channel}{callback} eq $callback
+        && $heap->{subscriptions}{$channel}{session}  eq $_[SENDER];
 
     $heap->{subscriptions}{$channel} = {
         callback => $callback,
         session  => $_[SENDER],
     };
+
+    $kernel->call($_[SESSION], 'send_transport', {
+        channel => '/meta/subscribe',
+        subscription => $channel,
+    });
 }
 
 =head2 unsubscribe ($channel)
@@ -291,12 +351,12 @@ Unsubscribes from channel.
 sub unsubscribe {
     my ($kernel, $heap, $channel) = @_[KERNEL, HEAP, ARG0];
 
-    $kernel->yield('send_transport', {
+    delete $heap->{subscriptions}{$channel};
+
+    $kernel->call($_[SESSION], 'send_transport', {
         channel => '/meta/unsubscribe',
         subscription => $channel,
     });
-
-    delete $heap->{subscriptions}{$channel};
 }
 
 =head2 disconnect ()
@@ -312,9 +372,10 @@ Sends a disconnect request.
 sub disconnect {
     my ($kernel, $heap) = @_[KERNEL, HEAP];
 
-    $kernel->yield('send_transport', {
+    $kernel->call($_[SESSION], 'send_transport', {
         channel => '/meta/disconnect',
     });
+    $heap->{_disconnect} = 1;
 }
 
 ## Internal Main States ###
@@ -336,6 +397,7 @@ sub handshake_response {
 
     # Store client id for all future requests
     $heap->{clientId} = $response->{clientId};
+    $heap->{client}->clientId( $heap->{clientId} );
 
     # Store advice
     $heap->{advice}   = $response->{advice} || {};
@@ -359,11 +421,13 @@ sub deliver {
         die "deliver(): Invalid message\n";
     }
 
+    # If the message has an id, see if I have a record of the instigating request
     my $request;
     if ($message->{id}) {
         $request = delete $heap->{messages}{ $message->{id} };
     }
 
+    # Handle /meta/ channel responses
     if (my ($meta_channel) = $message->{channel} =~ m{^/meta/(.+)$}) {
         if ($meta_channel eq 'connect') {
             if ($message->{successful} && ! $heap->{_connected}) {
@@ -377,11 +441,13 @@ sub deliver {
         }
     }
 
-    # Publishes to a channel may yield a simple successful message.  Ignore those.
-    if ($request && $request->{caller_state} eq 'publish' && $message->{successful}) {
+    # Publishes to a non-private channel MAY yield a simple successful message.  Ignore those.
+    if ($request && $request->{caller_state} eq 'publish'
+        && $message->{successful} && $message->{channel} !~ m{^/service/}) {
         return;
     }
 
+    # Check if I have a subscription for the channel
     my $matching_subscription;
     foreach my $subscription (keys %{ $heap->{subscriptions} }) {
         next unless channel_match($message->{channel}, $subscription);
@@ -389,6 +455,7 @@ sub deliver {
         last;
     }
 
+    # Call the callback if so for each subscription
     if ($matching_subscription) {
         my $sub_details = $heap->{subscriptions}{$matching_subscription};
         if ($sub_details->{callback}) {
@@ -403,12 +470,12 @@ sub deliver {
         }
     }
 
-    if (! $message->{successful} && $heap->{args}{ErrorCallback}) {
+    # Call generic callback for all non-successful messages
+    if (defined $message->{successful} && ! $message->{successful} && $heap->{args}{ErrorCallback}) {
         $heap->{args}{ErrorCallback}($message);
     }
 
-    print STDERR "deliver() couldn't handle message:\n" . Dumper($message)
-        if $heap->{args}{Debug};
+    $heap->{client}->logger->debug("deliver() couldn't handle message:\n" . Dumper($message));
 }
 
 ## Utilities ###
@@ -416,8 +483,7 @@ sub deliver {
 sub send_message {
     my ($kernel, $heap, $callback_state, @args) = @_[KERNEL, HEAP, ARG0 .. $#_];
 
-    print scalar(localtime()) . " >>> Pre-transport >>>\n" . Dumper(\@args)
-        if $heap->{args}{Debug};
+    $heap->{client}->logger->debug(" >>> Pre-transport >>>\n" . Dumper(\@args));
 
     # Create an HTTP POST request, encoding the args into JSON
     my $request = POST $heap->{remote_url}, [ message => $heap->{json}->encode(\@args) ];
@@ -441,15 +507,14 @@ sub ua_response {
     if ($meta && $meta->{json_callback}) {
         my $json;
         eval {
-            $json = $heap->{json}->decode( $response_object->content );
+            $json = decode_json_response($response_object);
         };
         if ($@) {
             # Ignore errors if shutting down
             return if $heap->{_shutdown};
-            die "Failed to JSON decode data (error $@).  Content:\n" . $response_object->content;
+            die $@;
         }
-        print scalar(localtime()) . " <<< Pre-transport <<<\n" . Dumper($json)
-            if $heap->{args}{Debug};
+        $heap->{client}->logger->debug("<<< Pre-transport <<<\n" . Dumper($json));
         $kernel->yield( $meta->{json_callback}, @$json );
     }
 }
@@ -472,10 +537,11 @@ sub send_transport {
         $kernel->post( $heap->{transport}, 'sendMessages', [ $message ]);
     }
     else {
-        print "Queueing message ".Dumper($message)." as no active transport\n"
-            if $heap->{args}{Debug};
+        $heap->{client}->logger->debug("Queueing message ".Dumper($message)." as no active transport");
         push @{ $heap->{message_queue} }, $message;
     }
+
+    return $msg_id;
 }
 
 sub flush_queue {
@@ -484,8 +550,7 @@ sub flush_queue {
     return unless $heap->{message_queue} && ref $heap->{message_queue} && int @{ $heap->{message_queue} };
     return unless $heap->{transport};
 
-    print "Flushing queue to transport\n"
-        if $heap->{args}{Debug};
+    $heap->{client}->logger->debug("Flushing queue to transport");
 
     $kernel->post($heap->{transport}, 'sendMessages', [ @{ $heap->{message_queue} } ]);
 

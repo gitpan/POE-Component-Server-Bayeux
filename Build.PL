@@ -9,6 +9,7 @@ my $build = Module::Build->new(
     requires => {
         'LWP' => 0,
         'Params::Validate' => 0,
+        'POE::Component::Client::HTTP' => 0,
         'POE::Component::Server::HTTP' => '0.09',
         'Class::Accessor' => 0,
         'Log::Log4perl' => 0,

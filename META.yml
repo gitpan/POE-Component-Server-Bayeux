@@ -1,6 +1,6 @@
 ---
 name: POE-Component-Server-Bayeux
-version: 0.01
+version: 0.02
 author:
   - 'Eric Waters <ewaters@uarc.com>'
 abstract: Bayeux/cometd server implementation in POE
@@ -15,6 +15,7 @@ requires:
   JSON::XS: 0
   LWP: 0
   Log::Log4perl: 0
+  POE::Component::Client::HTTP: 0
   POE::Component::Server::HTTP: 0.09
   Params::Validate: 0
   Switch: 0
@@ -24,14 +25,16 @@ build_requires:
 provides:
   POE::Component::Client::Bayeux:
     file: lib/POE/Component/Client/Bayeux.pm
-    version: 0.01
+    version: 0.02
   POE::Component::Client::Bayeux::Transport:
     file: lib/POE/Component/Client/Bayeux/Transport.pm
   POE::Component::Client::Bayeux::Transport::LongPolling:
     file: lib/POE/Component/Client/Bayeux/Transport/LongPolling.pm
+  POE::Component::Client::Bayeux::Utilities:
+    file: lib/POE/Component/Client/Bayeux/Utilities.pm
   POE::Component::Server::Bayeux:
     file: lib/POE/Component/Server/Bayeux.pm
-    version: 0.01
+    version: 0.02
   POE::Component::Server::Bayeux::Client:
     file: lib/POE/Component/Server/Bayeux/Client.pm
   POE::Component::Server::Bayeux::Message:

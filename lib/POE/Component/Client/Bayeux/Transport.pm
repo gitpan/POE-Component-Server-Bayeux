@@ -31,7 +31,12 @@ sub spawn {
             _start => sub {
                 my ($kernel, $heap) = @_[KERNEL, HEAP];
 
-                $kernel->alias_set( __PACKAGE__ . '_' . $child_counter++ );
+                $heap->{alias} = __PACKAGE__ . '_' . $child_counter++;
+                $kernel->alias_set($heap->{alias});
+            },
+            _stop => sub {
+                my ($kernel, $heap) = @_[KERNEL, HEAP];
+                $kernel->alias_remove($heap->{alias});
             },
         },
         package_states => [

@@ -104,10 +104,17 @@ USAGE
             time. Similar to mod_expires 'ExpiresByType $key "access plus
             $value seconds"'.
 
+        *PostHandle* (default: undef)
+            Provide a subref which will be called with the HTTP::Request and
+            HTTP::Response of any simple HTTP requests before the request is
+            completed. This could allow the code to modify the headers of
+            the response as needed (i.e., path-based expiry time).
+
         *Services* (default: {})
             Each key of this hash represents a service channel that will be
             available. The name of the channel will be '/service/$key', and
-            the handling is dependent on the $value.
+            the handling is dependent on the $value. Provide '_handler' as a
+            fallback handler.
 
             If $value is a coderef, the code will be called with a single
             arg of the message being acted upon. The return value(s) of the
@@ -156,6 +163,20 @@ USAGE
                       $message->is_error($error);
                   }
               }
+
+        *Callback* (defaults: sub {})
+            Coderef to receive general event notifications from the server.
+            Sends a hashref like so:
+
+              {
+                  event => 'new_connection',
+                  client_id => ...,
+                  client => ...,
+                  message => ...,
+              }
+
+            See "Server Callbacks" for more details about every type of
+            event that this will receive.
 
         Returns a class object with methods of interest:
 
@@ -210,6 +231,34 @@ POE STATES
         immediately posted to their callback state. For HTTP clients,
         messages are put into queue and flushed if they have an open
         /meta/connect.
+
+  client_push ({...})
+  Server Callbacks
+    Using the Callback feature of the server spawning, you can be notified
+    about every significant event on the server. Below describes all the
+    current callback events:
+
+    *subscribe*
+        Keys 'client_id' and 'channel'
+
+    *unsubscribe*
+        Keys 'client_id' and 'channel'
+
+    *publish*
+        Keys 'channel' and 'data', optional: 'client_id', 'id', 'ext'
+
+    *client_push*
+        Keys 'channel' and 'client_id', optional: (any extra). Indicates
+        data was pushed to the client not as a normal request/response or a
+        publish/subscribe (out-of-sequence reply to a /service, for
+        example). Likely only triggered by local sessions.
+
+    *client_connect*
+        Keys 'client_id' and either 'ip' or 'session' depending on the type
+        of client.
+
+    *client_disconnect*
+        Key 'client_id'.
 
 TODO
     Lots of stuff.

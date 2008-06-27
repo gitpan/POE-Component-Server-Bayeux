@@ -10,10 +10,11 @@ use lib "$FindBin::Bin/../lib";
 use POE qw(Component::Client::Bayeux);
 
 POE::Component::Client::Bayeux->spawn(
-    Host => '127.0.0.1',
+    Host => 'livesupport.xmission.com',
     Port => $ARGV[0] || '8095',
     Path => '/cometd',
     Alias => 'comet',
+    Debug => 1,
 );
 
 POE::Session->create(

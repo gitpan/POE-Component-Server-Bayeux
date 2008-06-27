@@ -14,11 +14,12 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 b542f9e19e02b2aa53d4898b283610cb58650a44 Build.PL
-SHA1 913d2557d5768f92bcb3b86f59a03026f7013208 MANIFEST
-SHA1 d17329a7167f7d942833d55f174f9e2acb10c246 META.yml
+SHA1 5254924b05660d26ae432ad1a0fc2c8286fc7b11 Build.PL
+SHA1 b373eb497af3031ce72dded5a57c3eb8fd813fbc Changes
+SHA1 ba1bfdd7c26b8f7951a4b2d021dd07e6792fe335 MANIFEST
+SHA1 af1b0cef576631305ab2b05c1caef8b1ef45da87 META.yml
 SHA1 cd14ada78fb37a0d926edd86eddcdf7f939de582 Makefile.PL
-SHA1 7ecbe025a03ae1b8fcf23c3a0dd8298f958666da README
+SHA1 309ef26ee94c9923afec2662c1c68250cd2197e4 README
 SHA1 f92174e8e6889d253a7da93bb58401cf9866c509 htdocs/examples/chat/chat.css
 SHA1 6e1da6e2983063616cf10df2f0b30c7cf8b0d987 htdocs/examples/chat/chat.js
 SHA1 846e19f4d1606deea5aa18030b7058017252b2cb htdocs/examples/chat/index.html
@@ -34,29 +35,30 @@ SHA1 3c8c5640b0a761fe2ebbd81ce1ebe3ccb9e49bf2 htdocs/examples/dojo/dojox/cometd/
 SHA1 e035a934e91d2234b54479bd5bce393a04433db1 htdocs/examples/echo/index.html
 SHA1 b157377a0905b9beda2f5fd4d9ffc1c97d2dc1b7 htdocs/examples/timesync/index.html
 SHA1 bb655c4ad355d40e270fc56936dce3bdcd0c25e4 htdocs/index.html
-SHA1 5c5fa253da263c19362ac6b1b519a927c5a58145 lib/POE/Component/Client/Bayeux.pm
-SHA1 904f2d9e41fd02655964240eb88533ef6657c044 lib/POE/Component/Client/Bayeux/Transport.pm
-SHA1 93ae1fa7fa1666dfbb1f2627b09a79b6a9689db6 lib/POE/Component/Client/Bayeux/Transport/LongPolling.pm
-SHA1 65b7c2b4b800c4e44d431f071c1ced111cf7f870 lib/POE/Component/Server/Bayeux.pm
-SHA1 3eb573abe6b642aa2a8867b04e488574b0babbc5 lib/POE/Component/Server/Bayeux/Client.pm
-SHA1 c0d40b251d7cc04abab3980637ed645d3d8da0d7 lib/POE/Component/Server/Bayeux/Message.pm
+SHA1 e7e2d2e120f9fce9d6f55d859bd3bfc4747e11fe lib/POE/Component/Client/Bayeux.pm
+SHA1 5272bf97f26cfc053395d93f183d3f483781fa2f lib/POE/Component/Client/Bayeux/Transport.pm
+SHA1 f73fad41db755032462a1c7d8b9c4e084f017935 lib/POE/Component/Client/Bayeux/Transport/LongPolling.pm
+SHA1 648919393d6a5cf4d1f50d8cbe52ff6ae00ddd67 lib/POE/Component/Client/Bayeux/Utilities.pm
+SHA1 50af761ee0cbae9f516efdf6e7813be24d0ef9ea lib/POE/Component/Server/Bayeux.pm
+SHA1 b9ba882874ce7972cb684e07ac67520f008807f8 lib/POE/Component/Server/Bayeux/Client.pm
+SHA1 8e98b22d3f8112888135d19da1081da7f52b41c9 lib/POE/Component/Server/Bayeux/Message.pm
 SHA1 6e2b72a1fa401e07ddf28bb61e54a0558dc7c259 lib/POE/Component/Server/Bayeux/Message/Factory.pm
 SHA1 3d94ba1f89bad233c88c9a76586bf9bb8e8edc46 lib/POE/Component/Server/Bayeux/Message/Invalid.pm
-SHA1 2375ebf60cfe40c296ab2d20a45365907e8eeaf6 lib/POE/Component/Server/Bayeux/Message/Meta.pm
+SHA1 bbcd9fc9cb4b88960da65dbe1953668643d41769 lib/POE/Component/Server/Bayeux/Message/Meta.pm
 SHA1 5235b7fdec04c9877a6dd81ddb2dc8b50e827ae0 lib/POE/Component/Server/Bayeux/Message/Publish.pm
-SHA1 2ecec666833322add76adb37fe20643d08aac14d lib/POE/Component/Server/Bayeux/Message/Service.pm
-SHA1 897f587bac702ee88937450c5d9895bbb53af680 lib/POE/Component/Server/Bayeux/Request.pm
+SHA1 e775a969f89578b700c4d8d6e8ed64db761fa915 lib/POE/Component/Server/Bayeux/Message/Service.pm
+SHA1 35987eb4b28185f31db5a6648100f06f08a9836e lib/POE/Component/Server/Bayeux/Request.pm
 SHA1 6adf6a3b3552fa3c6f951b5e9cd2bb6234da33b1 lib/POE/Component/Server/Bayeux/Utilities.pm
 SHA1 e798281e2cfb0235b2c7a8763eaafffbd714be9a t/acls.t
 SHA1 b4348ab7eab8dfd8376ab65d35bd9e4fb4ab7d24 t/channel_matching.t
 SHA1 dbed3ea41d07118ee33044c30a5119a6e1aca63d t/server_client.t
 SHA1 81ebb01805bf710dd88b1a73271aa68bfe40e1c5 t/services.t
-SHA1 ec547321536feb1d2bc64aea494dfdb5a8a708ab testbin/client.pl
+SHA1 785cc49277aa5b333a41b6791311d6dda9dc4d91 testbin/client.pl
 SHA1 6c536841b681889c096ea243eefa47db79bdb9f6 testbin/server.pl
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.6 (GNU/Linux)
 
-iD8DBQFIPaI0HHIpFH/pKkIRAjsxAJ9DmqoRY2kEmbnBPpL+hHgeSJH9mACfWSdP
-7R4jPP0M8doM14VtxbEqumE=
-=vhiZ
+iD8DBQFIZC4gHHIpFH/pKkIRAlIjAJ0ajYA1aRByUMkTOhWYKn7PgDQAdwCfTiOL
+YwL0LYQNVVTE0YcR3s3BExM=
+=Y//f
 -----END PGP SIGNATURE-----

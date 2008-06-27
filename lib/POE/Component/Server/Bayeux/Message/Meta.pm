@@ -145,6 +145,12 @@ sub handle {
                     'json-comment-filtered' => JSON::XS::true,
                 },
             );
+
+            # Remember client support for json-comment-filtered
+            if ($self->ext && $self->ext->{'json-comment-filtered'}) {
+                $client->flags->{'json-comment-filtered'} = 1;
+            }
+
             push @responses, \%response;
         }
         case 'connect' {
@@ -192,7 +198,7 @@ sub handle {
             }
 
             # Don't delay the first time they connect
-            if (! $client->flags->{last_connect}) {
+            if (++$client->flags->{connect_times} == 1) {
                 $no_delay = 1;
             }
             $client->flags->{last_connect} = time;

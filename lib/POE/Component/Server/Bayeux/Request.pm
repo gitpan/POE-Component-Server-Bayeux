@@ -35,6 +35,7 @@ __PACKAGE__->mk_accessors(qw(
     heap
     delay
     post_handle
+    json_comment_filtered
 ));
 
 ## Class Globals ###
@@ -255,7 +256,24 @@ sub init {
     my $params;
     my $json_requests = [];
 
+    my $payload;
+
+    # Parse the content type string
+
     my $content_type = $request->content_type;
+
+    # Support 'text/json; charset=UTF-8'
+    my %content_type_opts;
+    my @content_type_parts = split /\s*;\s*/, $content_type;
+    if (int @content_type_parts > 1) {
+        $content_type = shift @content_type_parts;
+        foreach my $part (@content_type_parts) {
+            my ($key, $value) = split /=/, $part;
+            # May or may not be key/value pairs, and are case-sensitive
+            $content_type_opts{$key} = $value;
+        }
+    }
+
     if ($content_type eq 'application/x-www-form-urlencoded') {
         # POST or GET
         if (my $content = $request->content) {
@@ -264,26 +282,31 @@ sub init {
         elsif ($request->uri =~ m!\?message=!) {
             ($params) = $request->uri =~ m/\?(.*)/;
         }
-    }
-    if (! $params) {
-        return $self->error("No content found in HTTP request (content type '$content_type')");
-    }
 
-    # Decode the urlencoded key-value pairs
-    my %content;
-    foreach my $pair (split /&/, $params) {
-        my ($key, $value) = split /=/, $pair, 2;
-        next unless $key && $value;
-        $content{ unescape($key) } = unescape($value);
-    }
+        if (! $params) {
+            return $self->error("No content found in HTTP request (content type '$content_type')");
+        }
 
-    if (! $content{message}) {
-        return $self->error("No 'message' key pair found in content");
+        # Decode the urlencoded key-value pairs
+        my %content;
+        foreach my $pair (split /&/, $params) {
+            my ($key, $value) = split /=/, $pair, 2;
+            next unless $key && $value;
+            $content{ unescape($key) } = unescape($value);
+        }
+
+        if (! $content{message}) {
+            return $self->error("No 'message' key pair found in content");
+        }
+        $payload = $content{message};
+    }
+    elsif ($content_type eq 'text/json') {
+        $payload = $request->content;
     }
 
     # Decode the payload
     eval {
-        $json_requests = $json->decode($content{message});
+        $json_requests = $json->decode($payload);
     };
     if ($@) {
         return $self->error("Failed to decode JSON payload: $@" );
@@ -352,10 +375,17 @@ sub form_response {
 
     my $response = $self->http_response;
     $self->json_response( \@message );
+    my $encoded = $json->encode( \@message );
 
-    $response->header( 'Content-Type' => 'text/json; charset=utf-8' );
+    my $type = 'text/json';
+    if ($self->json_comment_filtered) {
+        $encoded = "/*$encoded*/";
+        $type = 'text/json-comment-filtered';
+    }
+
+    $response->header( 'Content-Type' => "$type; charset=utf-8" );
     $response->code(RC_OK);
-    $response->content( $json->encode( \@message ) );
+    $response->content( $encoded );
 }
 
 =head2 logger ()

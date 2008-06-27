@@ -83,7 +83,7 @@ use POE qw(
     Component::Server::Bayeux::Request
 );
 use HTTP::Status; # for RC_OK
-use Params::Validate qw(CODEREF validate);
+use Params::Validate qw(CODEREF validate validate_with);
 use FindBin;
 use Data::Dumper;
 use POE::Component::Server::Bayeux::Utilities qw(:all);
@@ -100,7 +100,7 @@ use URI;
 
 ## Class globals ###
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 our $protocol_version = '1.0';
 our $supported_connection_types = [ 'long-polling' ];
 
@@ -165,11 +165,17 @@ Index file (think Apache config).
 Provide a hashref of MIME types and their associated expiry time.  Similar to
 mod_expires 'ExpiresByType $key "access plus $value seconds"'.
 
+=item I<PostHandle> (default: undef)
+
+Provide a subref which will be called with the B<HTTP::Request> and B<HTTP::Response>
+of any simple HTTP requests before the request is completed.  This could allow the code to modify
+the headers of the response as needed (i.e., path-based expiry time).
+
 =item I<Services> (default: {})
 
 Each key of this hash represents a service channel that will be available.  The
 name of the channel will be '/service/$key', and the handling is dependent on
-the $value.
+the $value.  Provide '_handler' as a fallback handler.
 
 If $value is a coderef, the code will be called with a single arg of the message
 being acted upon.  The return value(s) of the coderef will be considered response(s)
@@ -216,6 +222,19 @@ One could use this to perform authentication on the 'handshake' message:
       }
   }
 
+=item I<Callback> (defaults: sub {})
+
+Coderef to receive general event notifications from the server.  Sends a hashref like so:
+
+  {
+      event => 'new_connection',
+      client_id => ...,
+      client => ...,
+      message => ...,
+  }
+
+See L<Server Callbacks> for more details about every type of event that this will receive.
+
 =back
 
 Returns a class object with methods of interest:
@@ -249,8 +268,10 @@ sub spawn {
         DocumentRoot   => { default => $FindBin::Bin . '/../htdocs' },
         DirectoryIndex => { default => [ 'index.html' ] },
         TypeExpires    => { default => {} },
+        PostHandle     => { default => undef, type => CODEREF },
         Services       => { default => {} },
         MessageACL     => { default => sub {}, type => CODEREF },
+        Callback       => { default => sub {}, type => CODEREF },
     });
 
     # Setup logger
@@ -304,10 +325,15 @@ sub spawn {
             handle_generic   => \&http_server_generic,
             delay_request    => \&delay_request,
             complete_request => \&complete_request,
+            check_timeouts   => \&check_timeouts,
             
             subscribe        => \&subscribe,
             unsubscribe      => \&unsubscribe,
             publish          => \&publish,
+
+            client_push       => \&client_push,
+            client_connect    => \&client_connect,
+            client_disconnect => \&client_disconnect,
         },
         heap => {
             args => \%args,
@@ -352,6 +378,8 @@ sub manager_start {
     my ($kernel, $heap) = @_[KERNEL, HEAP];
 
     $kernel->alias_set( $heap->{manager} );
+
+    $kernel->delay('check_timeouts', 30);
 
     $heap->{logger}->info("Bayeux server started.  Connect to port $$heap{args}{Port}");
 }
@@ -430,6 +458,10 @@ sub http_server_generic {
         $response->content("Path '".$uri->path."' not found");
     }
 
+    if ($heap->{args}{PostHandle}) {
+        $heap->{args}{PostHandle}($request, $response);
+    }
+
     return RC_OK;
 }
 
@@ -461,7 +493,7 @@ sub delay_request {
     my ($kernel, $heap, $request_id, $delay) = @_[KERNEL, HEAP, ARG0, ARG1];
 
     $heap->{logger}->debug("Delaying $delay to process $request_id");
-    $kernel->delay('complete_request', $delay, $request_id);
+    $kernel->delay_add('complete_request', $delay, $request_id);
 }
 
 sub complete_request {
@@ -480,6 +512,24 @@ sub complete_request {
     }
     else {
         $heap->{logger}->debug("Delayed remote response:\n" . Dumper($request->json_response));
+    }
+}
+
+sub check_timeouts {
+    my ($kernel, $heap) = @_[KERNEL, HEAP];
+
+    # Setup my next call time
+    $kernel->delay('check_timeouts', 30);
+
+    foreach my $client_id (keys %{ $heap->{clients} }) {
+        my $client = POE::Component::Server::Bayeux::Client->new(
+            id => $client_id,
+            server_heap => $heap,
+        );
+        $client->check_timeout();
+        if ($client->is_error) {
+            $heap->{logger}->info("Found timeed out client $client_id in check_timeouts()");
+        }
     }
 }
 
@@ -540,7 +590,13 @@ sub subscribe {
     }
 
     $args{args}{subscribed} = time;
-    $heap->{clients}{ $args->{client_id} }{subscriptions}{ $args->{channel} } = $args{args}
+    $heap->{clients}{ $args->{client_id} }{subscriptions}{ $args->{channel} } = $args{args};
+
+    $heap->{args}{Callback}->({
+        event => 'subscribe',
+        client_id => $args->{client_id},
+        channel => $args->{channel},
+    });
 }
 
 =head2 unsubscribe ({...})
@@ -575,6 +631,12 @@ sub unsubscribe {
     return unless $client_heap;
     return unless $client_heap->{subscriptions}{ $args->{channel} };
     delete $client_heap->{subscriptions}{ $args->{channel} };
+
+    $heap->{args}{Callback}->({
+        event => 'unsubscribe',
+        client_id => $args->{client_id},
+        channel => $args->{channel},
+    });
 }
 
 =head2 publish ({...})
@@ -627,8 +689,16 @@ sub publish {
         }
     }
 
+    $heap->{args}{Callback}->({
+        event => 'publish',
+        %args,
+    });
+
     my @send_to_clients = keys %send_to_clients;
-    return unless @send_to_clients;
+    if (! @send_to_clients) {
+        $heap->{logger}->debug("publish('$args{channel}') had no Bayeux subscribers");
+        return;
+    }
 
     # Construct deliver packet
 
@@ -648,6 +718,149 @@ sub publish {
         $client->send_message(\%deliver, $send_to_clients{$client_id});
     }
 }
+
+=head2 client_push ({...})
+
+=cut
+
+sub client_push {
+    my ($kernel, $heap, $sender, $args) = @_[KERNEL, HEAP, SENDER, ARG0];
+    
+    # Validate args
+    my @args = %$args;
+    my %args;
+    eval {
+        %args = validate_with(
+            params => \@args,
+            spec => {
+                channel => 1,
+                client_id => 1,
+            },
+            allow_extra => 1,
+        );
+    };
+    if ($@) {
+        $heap->{logger}->error("client_push() invalid call: $@");
+        return;
+    }
+
+    # Construct the packet
+
+    my %deliver = (%args);
+    $deliver{clientId} = delete $deliver{client_id};
+
+    # Find the client and push the packet
+
+    my $client = POE::Component::Server::Bayeux::Client->new(
+        id => $args{client_id},
+        server_heap => $heap,
+    );
+    if (! $client) {
+        $heap->{logger}->error("client_push() failed: no client found from $args{client_id}");
+        return;
+    }
+    if ($client->is_error) {
+        $heap->{logger}->debug("client_push() failed: client $args{client_id} in error state");
+        return;
+    }
+    $client->send_message(\%deliver);
+
+    $heap->{args}{Callback}->({
+        event => 'client_push',
+        %args,
+    });
+}
+
+sub client_connect {
+    my ($kernel, $heap, $sender, $args) = @_[KERNEL, HEAP, SENDER, ARG0];
+    
+    my @args = %$args;
+    my %args;
+    eval {
+        %args = validate(@args, {
+            client_id => 1,
+            ip => 0,
+            session => 0,
+        });
+    };
+    if ($@) {
+        $heap->{logger}->error("client_connect() invalid call: $@");
+        return;
+    }
+
+    # Nothing to do here; the Client class adds it to my $heap->{clients}
+
+    $heap->{args}{Callback}->({
+        event => 'client_connect',
+        %args,
+    });
+}
+
+sub client_disconnect {
+    my ($kernel, $heap, $sender, $args) = @_[KERNEL, HEAP, SENDER, ARG0];
+    
+    my @args = %$args;
+    my %args;
+    eval {
+        %args = validate(@args, {
+            client_id => 1,
+        });
+    };
+    if ($@) {
+        $heap->{logger}->error("client_disconnect() invalid call: $@");
+        return;
+    }
+
+    my $client_heap = $heap->{clients}{ $args{client_id} };
+    return unless $client_heap;
+
+    foreach my $channel (keys %{ $client_heap->{subscriptions} }) {
+        # Do a call since this needs to happen right now
+        $kernel->call($_[SESSION], 'unsubscribe', {
+            client_id => $args{client_id},
+            channel => $channel,
+        });
+    }
+
+    delete $heap->{clients}{ $args{client_id} };
+
+    $heap->{args}{Callback}->({
+        event => 'client_disconnect',
+        %args,
+    });
+}
+
+=head2 Server Callbacks
+
+Using the B<Callback> feature of the server spawning, you can be notified about every significant event on the server.  Below describes all the current callback events:
+
+=over 4
+
+=item I<subscribe>
+
+Keys 'client_id' and 'channel'
+
+=item I<unsubscribe>
+
+Keys 'client_id' and 'channel'
+
+=item I<publish>
+
+Keys 'channel' and 'data', optional: 'client_id', 'id', 'ext'
+
+=item I<client_push>
+
+Keys 'channel' and 'client_id', optional: (any extra).  Indicates data was pushed to the client not as a normal request/response or a publish/subscribe (out-of-sequence reply to a /service, for example).  Likely only triggered by local sessions.
+
+=item I<client_connect>
+
+Keys 'client_id' and either 'ip' or 'session' depending on the type of client.
+
+=item I<client_disconnect>
+
+Key 'client_id'.
+
+=back
 
 =head1 TODO
 

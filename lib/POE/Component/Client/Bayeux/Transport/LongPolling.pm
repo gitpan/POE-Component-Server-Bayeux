@@ -4,7 +4,8 @@ use strict;
 use warnings;
 use POE;
 use Data::Dumper;
-use HTTP::Request::Common;
+use HTTP::Request;
+use POE::Component::Client::Bayeux::Utilities qw(decode_json_response);
 
 use base qw(POE::Component::Client::Bayeux::Transport);
 
@@ -42,12 +43,13 @@ sub openTunnelWith {
         $message->{clientId} = $pheap->{clientId};
     }
 
-    print scalar(localtime()) . " >>> LongPolling tunnel >>>\n".Dumper(\@messages)
-        if $pheap->{args}{Debug};
+    $pheap->{client}->logger->debug(">>> LongPolling tunnel >>>\n".Dumper(\@messages));
 
     # Create an HTTP POST request, encoding the messages into JSON
-    my $request = POST $pheap->{remote_url},
-        [ message => $pheap->{json}->encode(\@messages) ];
+    my $request = HTTP::Request->new('POST', $pheap->{remote_url},
+        [ 'content-type', 'text/json' ],
+        $pheap->{json}->encode(\@messages),
+    );
 
     # Create a UUID so I can collect meta info about this request
     my $uuid = $pheap->{uuid}->create_str();
@@ -72,16 +74,15 @@ sub tunnelResponse {
 
     my $json;
     eval {
-        $json = $pheap->{json}->decode( $response_object->content );
+        $json = decode_json_response($response_object);
     };
     if ($@) {
         # Ignore errors if shutting down
         return if $pheap->{_shutdown};
-        die "Failed to JSON decode data (error $@).  Content:\n" . $response_object->content;
+        die $@;
     }
 
-    print scalar(localtime()) . " <<< LongPolling tunnel <<<\n".Dumper($json)
-        if $pheap->{args}{Debug};
+    $pheap->{client}->logger->debug("<<< LongPolling tunnel <<<\n".Dumper($json));
 
     foreach my $message (@$json) {
         $kernel->post( $heap->{parent}, 'deliver', $message );
@@ -94,14 +95,27 @@ sub tunnelCollapse {
     my ($kernel, $heap) = @_[KERNEL, HEAP];
     my $pheap = $heap->{parent_heap};
 
-    if ($pheap->{advice} && $pheap->{advice}{reconnect} eq 'none') {
-        die "Server asked us not to reconnect";
+    if (my $advice = $pheap->{advice}) {
+        if ($advice->{reconnect} && $advice->{reconnect} eq 'none') {
+            die "Server asked us not to reconnect";
+        }
+        elsif ($advice->{reconnect} && $advice->{reconnect} eq 'handshake') {
+            $pheap->{_initialized} = 0;
+            $pheap->{_connected} = 0;
+            $kernel->yield('_stop');
+            $kernel->post( $heap->{parent}, 'handshake' );
+            return;
+        }
     }
 
     return if (! $pheap->{_initialized});
+    if (delete $pheap->{_disconnect}) {
+        $pheap->{_connected} = 0;
+        return;
+    }
 
     if ($pheap->{_polling}) {
-        print "tunnelCollapse: Wait for polling to end\n" if $pheap->{args}{Debug};
+        $pheap->{client}->logger->debug("tunnelCollapse: Wait for polling to end");
         return;
     }
 
@@ -124,12 +138,13 @@ sub sendMessages {
         $message->{clientId} = $pheap->{clientId};
     }
 
-    print scalar(localtime()) . " >>> LongPolling >>>\n".Dumper($messages)
-        if $pheap->{args}{Debug};
+    $pheap->{client}->logger->debug(">>> LongPolling >>>\n".Dumper($messages));
 
     # Create an HTTP POST request, encoding the messages into JSON
-    my $request = POST $pheap->{remote_url},
-        [ message => $pheap->{json}->encode($messages) ];
+    my $request = HTTP::Request->new('POST', $pheap->{remote_url},
+        [ 'content-type', 'text/json' ],
+        $pheap->{json}->encode($messages),
+    );
 
     # Use parent user agent to make request
     $kernel->post( $pheap->{ua}, 'request', 'deliver', $request );
@@ -143,16 +158,9 @@ sub deliver {
     my $request_tag     = $request_packet->[1]; # from the 'request' post
     my $response_object = $response_packet->[0];
 
-    my $json;
-    eval {
-        $json = $pheap->{json}->decode( $response_object->content );
-    };
-    if ($@) {
-        die "Failed to JSON decode data (error $@).  Content:\n" . $response_object->content;
-    }
+    my $json = decode_json_response($response_object);
 
-    print scalar(localtime()) . " <<< LongPolling <<<\n" . Dumper($json)
-        if $pheap->{args}{Debug};
+    $pheap->{client}->logger->debug("<<< LongPolling <<<\n" . Dumper($json));
 
     foreach my $message (@$json) {
         $kernel->post( $heap->{parent}, 'deliver', $message );

@@ -1,6 +1,7 @@
 testbin/client.pl
 testbin/server.pl
 Build.PL
+Changes
 htdocs/examples/chat/chat.css
 htdocs/examples/chat/chat.js
 htdocs/examples/chat/index.html
@@ -17,6 +18,7 @@ htdocs/examples/echo/index.html
 htdocs/examples/timesync/index.html
 htdocs/index.html
 lib/POE/Component/Client/Bayeux.pm
+lib/POE/Component/Client/Bayeux/Utilities.pm
 lib/POE/Component/Client/Bayeux/Transport.pm
 lib/POE/Component/Client/Bayeux/Transport/LongPolling.pm
 lib/POE/Component/Server/Bayeux.pm

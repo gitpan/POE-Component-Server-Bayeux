@@ -15,21 +15,34 @@ use strict;
 use warnings;
 use base qw(POE::Component::Server::Bayeux::Message);
 
-__PACKAGE__->mk_accessors(qw(method));
+__PACKAGE__->mk_accessors(qw(method handler));
 
 sub new {
     my $class = shift;
     my $self = $class->SUPER::new(@_);
 
-    # Extract and save the service method
+    # Extract and save the service method and handler
+
+    my ($method) = $self->channel =~ m{^/service/(.+)$};
+    if (! $method) {
+        $self->request->error("Must provide service method");
+        return;
+    }
+    my $handler = $method;
 
     my $known_methods = $self->server_config->{Services};
-    my ($method) = $self->channel =~ m{^/service/(.+)$};
-    if (! $method || ! $known_methods->{$method}) {
+
+    # Allow for generic _handler handler
+    if (! $known_methods->{$method} && $known_methods->{_handler}) {
+        $handler = '_handler';
+    }
+    elsif (! $known_methods->{$method}) {
         $self->request->error("Invalid service method $method");
         return;
     }
+
     $self->method($method);
+    $self->handler($handler);
 
     return $self;
 }
@@ -43,14 +56,14 @@ sub handle {
     my @responses;
 
     if (! $self->is_error) {
-        my $service_definition = $self->server_config->{Services}{ $self->method };
+        my $service_definition = $self->server_config->{Services}{ $self->handler };
         if (ref $service_definition && ref $service_definition eq 'CODE') {
             my @result;
             eval {
                 @result = $service_definition->($self);
             };
             if ($@) {
-                $self->is_error("Failed to execute method '".$self->method."' coderef: $!");
+                $self->is_error("Failed to execute method '".$self->handler."' coderef: $!");
             }
             push @responses, @result if @result;
         }
@@ -65,7 +78,7 @@ sub handle {
 
     foreach my $response (@responses) {
         $response->{channel} ||= $self->channel;
-        $response->{id} = $self->id if $self->id;
+        $response->{id} ||= $self->id if $self->id;
         $self->request->add_response($response);
     }
 }

@@ -243,6 +243,21 @@ Basic new() call, needs only 'request' and 'data'.
 
 =back
 
+=head2 payload
+
+=over 4
+
+Returns the message payload
+
+=back
+
+=cut
+
+sub payload {
+    my $self = shift;
+    return $self->{data};
+}
+
 =head2 mk_data_accessors (@method_names)
 
 =over 4
