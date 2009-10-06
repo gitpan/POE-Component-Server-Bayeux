@@ -16,7 +16,6 @@ use HTTP::Status; # for RC_OK
 use HTTP::Request::Common;
 use CGI::Simple::Util qw(unescape);
 use JSON::Any qw(XS);
-use Data::Dumper;
 use Data::UUID;
 use Params::Validate;
 
@@ -27,6 +26,7 @@ __PACKAGE__->mk_accessors(qw(
     id
     is_complete
     is_error
+    ip
     http_request
     http_response
     json_response
@@ -65,6 +65,7 @@ sub new {
         request => 1,
         response => 1,
         server_heap => 1,
+        ip => 0,
     });
 
     my %self = (
@@ -74,6 +75,7 @@ sub new {
         messages => [],
         responses => [],
         id => $uuid->create_str,
+        ip => $args{ip},
     );
 
     my $self = bless \%self, $class;
@@ -303,6 +305,9 @@ sub init {
     elsif ($content_type eq 'text/json') {
         $payload = $request->content;
     }
+    else {
+        return $self->error("Unsupported connection content-type '$content_type'");
+    }
 
     # Decode the payload
     eval {
@@ -318,15 +323,22 @@ sub init {
         $json_requests = [ $json_requests ];
     }
 
-    $self->logger->debug("New remote request:\n" . Dumper($json_requests));
+    $self->logger->debug("New remote request from ".$self->ip.", id ".$self->id.":", $json_requests);
 
     foreach my $message (@$json_requests) {
-        my $bayeux_message = POE::Component::Server::Bayeux::Message::Factory->create(
-            request => $self,
-            data => $message,
-        );
-        if (! $bayeux_message) {
-            $self->error("Invalid message found");
+        my $bayeux_message;
+        eval {
+            $bayeux_message = POE::Component::Server::Bayeux::Message::Factory->create(
+                request => $self,
+                data => $message,
+            );
+        };
+        if ($@ || ! $bayeux_message
+            || $bayeux_message->isa('POE::Component::Server::Bayeux::Message::Invalid')
+        ) {
+            $self->error("Invalid message found" . ($@ ? " ($@)" : ''));
+            $self->logger->debug("Remote request was invalid");
+            last;
         }
         else {
             push @{ $self->{messages} }, $bayeux_message;

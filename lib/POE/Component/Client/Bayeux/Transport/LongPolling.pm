@@ -86,6 +86,9 @@ sub tunnelResponse {
 
     foreach my $message (@$json) {
         $kernel->post( $heap->{parent}, 'deliver', $message );
+        if ($message->{channel} eq '/meta/connect') {
+            $pheap->{advice} = $message->{advice} || {};
+        }
     }
 
     $kernel->yield('tunnelCollapse');
@@ -95,11 +98,18 @@ sub tunnelCollapse {
     my ($kernel, $heap) = @_[KERNEL, HEAP];
     my $pheap = $heap->{parent_heap};
 
-    if (my $advice = $pheap->{advice}) {
-        if ($advice->{reconnect} && $advice->{reconnect} eq 'none') {
+    my $reconnect;
+    if ($pheap->{advice}) {
+        $reconnect = $pheap->{advice}{reconnect};
+    }
+    if (delete $pheap->{_reconnect}) {
+        $reconnect = 'handshake';
+    }
+    if ($reconnect) {
+        if ($reconnect eq 'none') {
             die "Server asked us not to reconnect";
         }
-        elsif ($advice->{reconnect} && $advice->{reconnect} eq 'handshake') {
+        elsif ($reconnect eq 'handshake') {
             $pheap->{_initialized} = 0;
             $pheap->{_connected} = 0;
             $kernel->yield('_stop');

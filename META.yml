@@ -1,12 +1,14 @@
 ---
 name: POE-Component-Server-Bayeux
-version: 0.02
+version: 0.03
 author:
   - 'Eric Waters <ewaters@uarc.com>'
 abstract: Bayeux/cometd server implementation in POE
 license: perl
 resources:
   license: http://dev.perl.org/licenses/
+build_requires:
+  Test::More: 0
 requires:
   CGI::Simple: 0
   Class::Accessor: 0
@@ -20,12 +22,12 @@ requires:
   Params::Validate: 0
   Switch: 0
   URI: 0
-build_requires:
-  Test::More: 0
+configure_requires:
+  Module::Build: 0.340201
 provides:
   POE::Component::Client::Bayeux:
     file: lib/POE/Component/Client/Bayeux.pm
-    version: 0.02
+    version: 0.03
   POE::Component::Client::Bayeux::Transport:
     file: lib/POE/Component/Client/Bayeux/Transport.pm
   POE::Component::Client::Bayeux::Transport::LongPolling:
@@ -34,9 +36,11 @@ provides:
     file: lib/POE/Component/Client/Bayeux/Utilities.pm
   POE::Component::Server::Bayeux:
     file: lib/POE/Component/Server/Bayeux.pm
-    version: 0.02
+    version: 0.03
   POE::Component::Server::Bayeux::Client:
     file: lib/POE/Component/Server/Bayeux/Client.pm
+  POE::Component::Server::Bayeux::Logger:
+    file: lib/POE/Component/Server/Bayeux.pm
   POE::Component::Server::Bayeux::Message:
     file: lib/POE/Component/Server/Bayeux/Message.pm
   POE::Component::Server::Bayeux::Message::Factory:
@@ -53,7 +57,7 @@ provides:
     file: lib/POE/Component/Server/Bayeux/Request.pm
   POE::Component::Server::Bayeux::Utilities:
     file: lib/POE/Component/Server/Bayeux/Utilities.pm
-generated_by: Module::Build version 0.2808
+generated_by: Module::Build version 0.340201
 meta-spec:
-  url: http://module-build.sourceforge.net/META-spec-v1.2.html
-  version: 1.2
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4

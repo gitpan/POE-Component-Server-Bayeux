@@ -1,5 +1,6 @@
 testbin/client.pl
 testbin/server.pl
+testbin/cli_client.pl
 Build.PL
 Changes
 htdocs/examples/chat/chat.css

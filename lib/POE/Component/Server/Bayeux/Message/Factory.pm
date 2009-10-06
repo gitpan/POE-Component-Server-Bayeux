@@ -19,14 +19,14 @@ use POE qw(
     Component::Server::Bayeux::Message::Publish
 );
 
-use Params::Validate;
+use Params::Validate qw(validate HASHREF ARRAYREF);
 
 sub create {
     my $class = shift;
 
     my %args = validate(@_, {
         request => 1,
-        data => 1,
+        data    => { type => HASHREF },
     });
 
     my $channel = $args{data}{channel};

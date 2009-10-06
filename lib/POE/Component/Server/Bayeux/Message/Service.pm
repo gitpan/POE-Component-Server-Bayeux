@@ -62,8 +62,15 @@ sub handle {
             eval {
                 @result = $service_definition->($self);
             };
-            if ($@) {
-                $self->is_error("Failed to execute method '".$self->handler."' coderef: $!");
+            if (my $ex = $@) {
+                my $text;
+                if (ref($ex) && $ex->can('error')) {
+                    $text = $ex->error;
+                }
+                else {
+                    $text = $ex . '';
+                }
+                $self->is_error("Failed to execute method '".$self->handler."' coderef: $text");
             }
             push @responses, @result if @result;
         }

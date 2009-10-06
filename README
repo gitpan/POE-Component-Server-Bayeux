@@ -87,13 +87,19 @@ USAGE
             to rehandshake. Clients must not go this long between having a
             connect open.
 
+        *ClientMaxConnections* (default: 10)
+            Maximum number of concurrent connections allowed from a single
+            IP address. Not effective for anything but the bayeux/cometd
+            connections, as the simple HTTP server doesn't support counting
+            concurrent connections.
+
         *Debug* (default: 0)
             Either 0 or 1, indicates level of logging.
 
         *LogFile* (default: undef)
             If present, opens the file path indicated for logging output.
 
-        *DocumentRoot* (default: '../htdocs')
+        *DocumentRoot* (default: '/var/www')
             Document root of generic HTTP server for file serving.
 
         *DirectoryIndex* (default: [ 'index.html' ])
@@ -177,6 +183,10 @@ USAGE
 
             See "Server Callbacks" for more details about every type of
             event that this will receive.
+
+        *ContentHandler* (defaults: {})
+            Additional ContentHandler for POE::Component::Server::HTTP
+            creation. Use this to extend the HTTP server content handling.
 
         Returns a class object with methods of interest:
 

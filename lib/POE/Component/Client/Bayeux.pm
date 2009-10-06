@@ -69,7 +69,7 @@ __PACKAGE__->mk_accessors(qw(session clientId logger));
 our @EXPORT_OK = qw(decode_json_response);
 
 my $protocol_version = '1.0';
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 =head1 USAGE
 
@@ -175,6 +175,7 @@ sub spawn {
             subscribe   => \&subscribe,
             unsubscribe => \&unsubscribe,
             disconnect  => \&disconnect,
+            reconnect   => \&reconnect,
 
             # Internal
             handshake => \&handshake,
@@ -194,6 +195,9 @@ sub spawn {
             subscriptions => {},
             client     => $self,
         },
+        ($ENV{POE_DEBUG} ? (
+        options => { trace => 1, debug => 1 },
+        ) : ()),
     );
 
     # Setup logger
@@ -231,6 +235,10 @@ sub client_start {
     my ($kernel, $heap) = @_[KERNEL, HEAP];
 
     $kernel->alias_set( $heap->{args}{Alias} );
+
+    if ($ENV{POE_DEBUG}) {
+        $kernel->alias_resolve($heap->{ua})->option( trace => 1, debug => 1 );
+    }
 }
 
 sub client_stop {
@@ -242,7 +250,13 @@ sub client_shutdown {
 
     $heap->{_shutdown} = 1;
 
-    $kernel->post( $heap->{ua}, 'shutdown' );
+    $kernel->call( $heap->{ua}, 'shutdown' );
+
+    if ($heap->{transport}) {
+        $kernel->call( $heap->{transport}, 'shutdown' );
+    }
+
+    $kernel->alias_remove( $heap->{args}{Alias} );
 }
 
 ## Public States ###
@@ -269,7 +283,7 @@ sub init {
 
 
 sub handshake {
-    my ($kernel, $heap) = @_[KERNEL, HEAP];
+    my ($kernel, $heap, %ext) = @_[KERNEL, HEAP, ARG0 .. $#_];
 
     my %handshake = (
         channel => '/meta/handshake',
@@ -278,6 +292,7 @@ sub handshake {
         supportedConnectionTypes => [ 'long-polling' ],
         ext => {
             'json-comment-filtered' => 1,
+            %ext,
         }
     );
 
@@ -286,6 +301,7 @@ sub handshake {
     # Unsubscribe from all TODO
 
     $heap->{_initialized} = 1;
+    $heap->{_connected} = 0;
 }
 
 =head2 publish ($channel, $message)
@@ -376,6 +392,25 @@ sub disconnect {
         channel => '/meta/disconnect',
     });
     $heap->{_disconnect} = 1;
+}
+
+=head2 reconnect ()
+
+=over 4
+
+Disconnect and reconnect
+
+=back
+
+=cut
+
+sub reconnect {
+    my ($kernel, $heap) = @_[KERNEL, HEAP];
+
+    $kernel->call($_[SESSION], 'send_transport', {
+        channel => '/meta/disconnect',
+    });
+    $heap->{_reconnect} = 1;
 }
 
 ## Internal Main States ###

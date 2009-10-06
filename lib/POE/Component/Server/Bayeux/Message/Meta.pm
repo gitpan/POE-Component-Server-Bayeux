@@ -34,10 +34,7 @@ my %known_types = (
     },
     subscribe => {
         clientId => 1,
-        subscription => {
-            # Not subscribing to '/meta/' or '/service/'
-            regex => qr{^/(?!(meta|service)/)},
-        },
+        subscription => 1,
     },
     unsubscribe => {
         clientId => 1,
@@ -245,7 +242,10 @@ sub handle {
                 subscription => $self->subscription,
             };
 
-            $self->request->subscribe($client->id, $self->subscription);
+            # Don't record a subscription to /meta or /service
+            if ($self->subscription !~ m{^/(meta|service)/}) {
+                $self->request->subscribe($client->id, $self->subscription);
+            }
         }
         case 'unsubscribe' {
             my $client;

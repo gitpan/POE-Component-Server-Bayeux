@@ -13,6 +13,7 @@ my $server = POE::Component::Server::Bayeux->spawn(
     Alias => 'bayeux_server',
     Debug => 1,
     LogFile => $FindBin::Bin.'/../bayeux.log',
+    DocumentRoot => $FindBin::Bin . '/../htdocs',
     Services => {
         echo => sub {
             my ($message) = @_;

@@ -13,7 +13,6 @@ Used internally by L<POE::Component::Server::Bayeux>.
 use strict;
 use warnings;
 use Params::Validate;
-use Data::Dumper;
 use Data::UUID;
 use POE;
 
@@ -76,7 +75,7 @@ sub new {
     my $self = bless \%self, $class;
 
     if ($self->request) {
-        $self->ip( $self->request->http_request->{connection}{remote_ip} );
+        $self->ip( $self->request->ip );
     }
 
     # Don't let the client id be arbitrarily defined save by a POE session
@@ -237,7 +236,9 @@ sub send_message {
 
     $self->logger->debug("Queuing message to client ".$self->id);
     push @{ $self->heap->{queued_responses} }, $message;
-    $self->flush_queue();
+
+    # Delay flush_queue so that if other responses need to be queued, they'll go out at the same time
+    $poe_kernel->post($self->server_heap->{manager}, 'delay_sub', 'flush_queue.' . $self->id, 0, sub { $self->flush_queue });
 }
 
 =head2 check_timeout ()

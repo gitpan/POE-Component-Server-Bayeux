@@ -38,6 +38,10 @@ sub spawn {
                 my ($kernel, $heap) = @_[KERNEL, HEAP];
                 $kernel->alias_remove($heap->{alias});
             },
+            shutdown => sub {
+                my ($kernel, $heap) = @_[KERNEL, HEAP];
+                $kernel->alias_remove($heap->{alias});
+            }, 
         },
         package_states => [
             $package => [
@@ -51,6 +55,9 @@ sub spawn {
         heap => {
             %args,
         },
+        ($ENV{POE_DEBUG} ? (
+        options => { trace => 1, debug => 1 },
+        ) : ()),
     );
 
     return $session->ID;

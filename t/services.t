@@ -32,6 +32,7 @@ my $server = POE::Component::Server::Bayeux->spawn(
             return { data => { answer => $answer } };
         },
     },
+    Debug => $ENV{DEBUG} ? 1 : 0,
 );
 isa_ok($server, 'POE::Component::Server::Bayeux');
 
@@ -39,6 +40,7 @@ my $client = POE::Component::Client::Bayeux->spawn(
     Host => '127.0.0.1',
     Port => $test_port,
     Alias => 'client',
+    Debug => $ENV{DEBUG} ? 1 : 0,
 );
 isa_ok($client, 'POE::Component::Client::Bayeux');
 
@@ -46,7 +48,18 @@ POE::Session->create(
     inline_states => {
         _start => \&start,
         new_message => \&new_message,
+        stop => sub {
+            my ($kernel, $heap) = @_[KERNEL, HEAP];
+
+            $kernel->call('client', 'shutdown');
+            $kernel->call('server', 'shutdown');
+            $kernel->alias_remove('test_session');
+            $kernel->stop();
+        },
     },
+    ($ENV{POE_DEBUG} ? (
+    options => { trace => 1, debug => 1 },
+    ) : ()),
 );
 
 $poe_kernel->run();
@@ -88,7 +101,6 @@ sub new_message {
     my @still_waiting = keys %{ $heap->{waiting} };
     return if @still_waiting;
 
-    $kernel->call('client', 'shutdown');
-    $kernel->call('server', 'shutdown');
-    exit;
+    $kernel->call('client', 'disconnect');
+    $kernel->delay('stop', 1);
 }

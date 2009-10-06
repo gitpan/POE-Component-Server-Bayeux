@@ -16,7 +16,6 @@ Each message can override or call via SUPER the object methods here.
 use strict;
 use warnings;
 
-use Data::Dumper;
 use Params::Validate qw(validate validate_with);
 use base qw(Class::Accessor);
 

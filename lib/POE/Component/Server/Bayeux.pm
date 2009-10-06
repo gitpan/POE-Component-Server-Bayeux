@@ -83,9 +83,7 @@ use POE qw(
     Component::Server::Bayeux::Request
 );
 use HTTP::Status; # for RC_OK
-use Params::Validate qw(CODEREF validate validate_with);
-use FindBin;
-use Data::Dumper;
+use Params::Validate qw(CODEREF HASHREF validate validate_with);
 use POE::Component::Server::Bayeux::Utilities qw(:all);
 
 # Logger modules
@@ -100,7 +98,7 @@ use URI;
 
 ## Class globals ###
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 our $protocol_version = '1.0';
 our $supported_connection_types = [ 'long-polling' ];
 
@@ -114,6 +112,63 @@ our %file_types = (
     'image/jpeg'             => [ qr/\.jpe?g$/i ],
     'image/gif'              => [ qr/\.gif$/i ],
 );
+
+{
+    package POE::Component::Server::Bayeux::Logger;
+
+    # Performing a dump of a data structure is a useful thing for debuging,
+    # but in live code you may not need it.  This is one way of accomplishing
+    # this.
+    
+    use strict;
+    use warnings;
+    use Carp;
+
+    __PACKAGE__->mk_wrapped_levels(qw(trace debug info warn error fatal));
+
+    sub new {
+        my ($class, %self) = @_;
+
+        croak "Pass 'logger'" unless $self{logger};
+
+        if (! $self{dumper}) {
+            require JSON::XS;
+            my $json = JSON::XS->new();
+            $json->indent(1);
+            $json->ascii(1);
+            $json->space_after(1);
+            $self{dumper} = sub {
+                $json->encode(@_);
+            };
+        }
+
+        return bless \%self, $class;
+    }
+
+    sub mk_wrapped_levels {
+        my ($class, @levels) = @_;
+
+        no strict 'refs';
+        foreach my $level (@levels) {
+            *{"${class}::$level"} = sub {
+                my ($self, $message, @extra) = @_;
+                my $logger = $self->{logger};
+
+                # Make sure before creating a dump of the ref's that I have to
+                my $is_method = 'is_' . $level;
+                return unless $logger->$is_method;
+
+                my $total = $message;
+                if (@extra) {
+                    $total .= "\n" unless $total =~ m/\n$/s;
+                    $total .= $self->{dumper}->(@extra);
+                }
+
+                $logger->$level($total);
+            };
+        }
+    }
+}
 
 ## Class methods ###
 
@@ -144,6 +199,12 @@ Allow HTTP-connected clients to publish without handshake.
 Seconds before an HTTP-connected client is timed out and forced to rehandshake.
 Clients must not go this long between having a connect open.
 
+=item I<ClientMaxConnections> (default: 10)
+
+Maximum number of concurrent connections allowed from a single IP address.  Not effective
+for anything but the bayeux/cometd connections, as the simple HTTP server doesn't support
+counting concurrent connections.
+
 =item I<Debug> (default: 0)
 
 Either 0 or 1, indicates level of logging.
@@ -152,7 +213,7 @@ Either 0 or 1, indicates level of logging.
 
 If present, opens the file path indicated for logging output.
 
-=item I<DocumentRoot> (default: '../htdocs')
+=item I<DocumentRoot> (default: '/var/www')
 
 Document root of generic HTTP server for file serving.
 
@@ -235,6 +296,10 @@ Coderef to receive general event notifications from the server.  Sends a hashref
 
 See L<Server Callbacks> for more details about every type of event that this will receive.
 
+=item I<ContentHandler> (defaults: {})
+
+Additional ContentHandler for L<POE::Component::Server::HTTP> creation.  Use this to extend the HTTP server content handling.
+
 =back
 
 Returns a class object with methods of interest:
@@ -265,18 +330,23 @@ sub spawn {
         LogFile        => { default => '' },
         # Client must not go 2 minutes without having an outstanding connect
         ConnectTimeout => { default => 2 * 60 },
-        DocumentRoot   => { default => $FindBin::Bin . '/../htdocs' },
+        DocumentRoot   => { default => '/var/www' },
         DirectoryIndex => { default => [ 'index.html' ] },
         TypeExpires    => { default => {} },
         PostHandle     => { default => undef, type => CODEREF },
         Services       => { default => {} },
         MessageACL     => { default => sub {}, type => CODEREF },
         Callback       => { default => sub {}, type => CODEREF },
+        ContentHandler => { default => {}, type => HASHREF },
+        ClientMaxConnections => { default => 10 },
+        Logger         => 0,
     });
 
+    my $logger = $args{Logger};
+
     # Setup logger
-    my $logger = Log::Log4perl->get_logger('bayeux_server');
-    {
+    if (! $logger) {
+        $logger = Log::Log4perl->get_logger('bayeux_server');
         my $logger_layout = Log::Log4perl::Layout::PatternLayout->new("[\%d] \%p: \%m\%n");
         $logger->level($args{Debug} ? $DEBUG : $INFO);
 
@@ -301,6 +371,11 @@ sub spawn {
         }
     }
 
+    # Wrap the Log4perl logger in my own class
+    $logger = POE::Component::Server::Bayeux::Logger->new(
+        logger => $logger,
+    );
+
     # Create HTTP server
     my $http_aliases = POE::Component::Server::HTTP->new(
         Port => $args{Port},
@@ -311,11 +386,14 @@ sub spawn {
             '/' => sub {
                 $poe_kernel->call( $args{Alias}, 'handle_generic', @_ );
             },
+            %{ $args{ContentHandler} },
         },
     );
 
+    my $self = bless { %args, logger => $logger }, $class;
+
     # Create manager session
-    my $session = POE::Session->create(
+    $self->{session} = POE::Session->create(
         inline_states => {
             _start => \&manager_start,
             _stop  => \&manager_stop,
@@ -334,6 +412,9 @@ sub spawn {
             client_push       => \&client_push,
             client_connect    => \&client_connect,
             client_disconnect => \&client_disconnect,
+
+            delay_sub         => \&delay_sub,
+            delay_sub_cb      => \&delay_sub_cb,
         },
         heap => {
             args => \%args,
@@ -348,16 +429,15 @@ sub spawn {
             requests => {
             #   example_request_id => 1,
             },
+            requests_by_ip => {},
             logger => $logger,
             http_aliases => $http_aliases,
         },
-        options => {
-            trace => 0,
-            debug => 0,
-        },
+        ($ENV{POE_DEBUG} ? (
+        options => { trace => 1, debug => 1 },
+        ) : ()),
     );
 
-    my $self = bless { %args, logger => $logger, session => $session }, $class;
     return $self;
 }
 
@@ -382,6 +462,11 @@ sub manager_start {
     $kernel->delay('check_timeouts', 30);
 
     $heap->{logger}->info("Bayeux server started.  Connect to port $$heap{args}{Port}");
+
+    if ($ENV{POE_DEBUG}) {
+        $kernel->alias_resolve($heap->{http_aliases}{httpd})->option( trace => 1, debug => 1 );
+        $kernel->alias_resolve($heap->{http_aliases}{tcp})->option( trace => 1, debug => 1 );
+    }
 }
 
 sub manager_stop {
@@ -397,8 +482,11 @@ sub manager_shutdown {
         $request->complete();
     }
 
-    $kernel->call( $heap->{http_session}{httpd}, 'shutdown' );
     $kernel->alarm_remove_all();
+    $kernel->alias_set( $heap->{manager} );
+
+    $kernel->call( $heap->{http_aliases}{httpd}, 'shutdown' );
+    $kernel->call( $heap->{http_aliases}{tcp}, 'shutdown' );
 }
 
 sub http_server_generic {
@@ -451,7 +539,8 @@ sub http_server_generic {
         close $in;
         $response->content($content);
 
-        $heap->{logger}->info(sprintf 'Serving %s %s %s', $request->{connection}{remote_ip}, $uri->path, $response->content_type);
+        my $ip = $request->header('X-Forwarded-For') || $request->{connection}{remote_ip};
+        $heap->{logger}->info(sprintf 'Serving %s %s %s', $ip, $uri->path, $response->content_type);
     }
     else {
         $response->code(RC_NOT_FOUND);
@@ -470,21 +559,49 @@ sub http_server_generic {
 sub handle_cometd {
     my ($kernel, $heap, $request, $response) = @_[KERNEL, HEAP, ARG0, ARG1];
 
-    $heap->{logger}->debug("Handling new cometd request");
+    # Deny based upon ClientMaxConnections restrictions
+
+    my $ip = $request->header('X-Forwarded-For') || $request->{connection}{remote_ip};
+    if (! $ip) {
+        $ip = '0.0.0.0';
+        $heap->{logger}->error("No IP found for cometd request");
+    }
+
+    $heap->{requests_by_ip}{$ip} ||= {};
+    my @request_ids = keys %{ $heap->{requests_by_ip}{$ip} };
+    if (int @request_ids > $heap->{args}{ClientMaxConnections}) {
+        $heap->{logger}->info("Denying $ip; too many connections (".int(@request_ids).")");
+
+        $response->code(RC_SERVICE_UNAVAILABLE);
+        $response->header( 'Content-Type' => "text/json; charset=utf-8" );
+        $response->content( '{ "error": "Too many connections from your IP", "successful": false }' );
+        return RC_OK;
+    }
+    else {
+        #$heap->{logger}->info("IP $ip has " . int(@request_ids) . " connections");
+    }
+
+    # Proceed with processing
+
+    #$heap->{logger}->debug("Handling new cometd request");
+
+    #$heap->{logger}->debug($request->as_string);
 
     my $bayeux_request = POE::Component::Server::Bayeux::Request->new(
         request => $request,
         response => $response,
         server_heap => $heap,
+        ip => $ip,
     );
     $bayeux_request->handle();
 
     if ($bayeux_request->is_complete) {
-        $heap->{logger}->debug("Immediate remote response:\n" . Dumper($bayeux_request->json_response));
+        $heap->{logger}->debug("Immediate remote response:", $bayeux_request->json_response);
         return RC_OK;
     }
     else {
         $heap->{requests}{ $bayeux_request->id } = $bayeux_request;
+        $heap->{requests_by_ip}{$ip}{ $bayeux_request->id } = $bayeux_request;
         return RC_WAIT;
     }
 }
@@ -492,26 +609,35 @@ sub handle_cometd {
 sub delay_request {
     my ($kernel, $heap, $request_id, $delay) = @_[KERNEL, HEAP, ARG0, ARG1];
 
-    $heap->{logger}->debug("Delaying $delay to process $request_id");
+    $heap->{logger}->debug("Delaying $delay to process request $request_id");
     $kernel->delay_add('complete_request', $delay, $request_id);
 }
 
 sub complete_request {
     my ($kernel, $heap, $request_id) = @_[KERNEL, HEAP, ARG0];
 
-    $heap->{logger}->debug("complete_request($request_id)");
-
     return unless defined $heap->{requests}{$request_id};
     my $request = delete $heap->{requests}{$request_id};
+
+    my $ip = $request->ip;
+    if ($heap->{requests_by_ip}{$ip}) {
+        delete $heap->{requests_by_ip}{$ip}{$request_id};
+        if (! keys %{ $heap->{requests_by_ip}{$ip} }) {
+            delete $heap->{requests_by_ip}{$ip};
+        }
+    }
+    else {
+        $heap->{logger}->error("Couldn't find requests by ip ".($ip || 'undef'));
+    }
 
     eval {
         $request->complete();
     };
     if ($@) {
-        $heap->{logger}->error("Couldn't complete request $request_id - mayhap the client went away?");
+        $heap->{logger}->error("Couldn't complete request $request_id ($@) - mayhap the client went away?");
     }
     else {
-        $heap->{logger}->debug("Delayed remote response:\n" . Dumper($request->json_response));
+        $heap->{logger}->debug("Delayed remote response to request $request_id from $ip:", $request->json_response);
     }
 }
 
@@ -531,6 +657,22 @@ sub check_timeouts {
             $heap->{logger}->info("Found timeed out client $client_id in check_timeouts()");
         }
     }
+}
+
+sub delay_sub {
+    my ($kernel, $heap, $delay_name, $delay_sec, $sub) = @_[KERNEL, HEAP, ARG0 .. $#_];
+
+    if (my $existing = $heap->{delay_sub}{$delay_name}) {
+        return;
+    }
+    $kernel->delay_add('delay_sub_cb', $delay_sec, $delay_name);
+    $heap->{delay_sub}{$delay_name} = $sub;
+}
+sub delay_sub_cb {
+    my ($kernel, $heap, $delay_name) = @_[KERNEL, HEAP, ARG0];
+
+    my $sub = delete $heap->{delay_sub}{$delay_name};
+    &$sub();
 }
 
 ## Client agnostic, no auth performed ###
@@ -667,6 +809,7 @@ sub publish {
             data => 1,
             id => 0,
             ext => 0,
+            timestamp => 0,
         });
     };
     if ($@) {
@@ -705,7 +848,7 @@ sub publish {
     my %deliver = (
         map { $_ => $args{$_} }
         grep { defined $args{$_} }
-        qw(channel data id ext)
+        qw(channel data id ext timestamp)
     );
     $deliver{clientId} = $args{client_id} if defined $args{client_id};
 
@@ -760,7 +903,7 @@ sub client_push {
         return;
     }
     if ($client->is_error) {
-        $heap->{logger}->debug("client_push() failed: client $args{client_id} in error state");
+        $heap->{logger}->debug("client_push() failed: client $args{client_id} in error state (".$client->is_error.")");
         return;
     }
     $client->send_message(\%deliver);
